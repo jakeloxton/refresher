@@ -71,7 +71,6 @@ func restartDeployment(id string) error {
 		}
 	}
 
-	
 	return nil
 }
 
@@ -226,7 +225,7 @@ func main() {
 	}
 
 	for {
-		annotationID := <- notify
+		annotationID := <-notify
 
 		if annotationID == "" {
 			log.Warning("received empty data on notify channel")
