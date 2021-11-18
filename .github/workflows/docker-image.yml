@@ -36,7 +36,7 @@ jobs:
           # Note: tags has to be all lower-case
           tags: |
             jakeloxton/refresher:latest 
-            jakeloxton/refresher:${{github.run_number}}
+            jakeloxton/refresher:v1.${{github.run_number}}
           # build on feature branches, push only on main branch
           push: ${{ github.ref == 'refs/heads/main' }}
 
