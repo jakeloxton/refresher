@@ -71,6 +71,7 @@ func restartDeployment(id string) error {
 		}
 	}
 
+	
 	return nil
 }
 
