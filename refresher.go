@@ -28,6 +28,7 @@ type Config struct {
 	CheckThreshold    int           `opts:"help=how many times changes should be verified before a reload is triggered"`
 	AnnotationKey     string        `opts:"help=the annotation key to be checked when a reload is triggered"`
 	ReloadKey         string        `opts:"help=the annotation key to trigger a reload"`
+	DryRun            bool          `opts:"help=flag stating whether or not we should skip the kubernetes api calls"`
 }
 
 type Source struct {
@@ -114,75 +115,70 @@ func parseSourcesFile(configPath string) {
 		})
 	}
 
+	if len(sources) < 1 {
+		log.Fatal("config file contained no sources")
+	}
+
 	log.Infof("parsed %d sources", len(sources))
 }
 
-func run() {
+func watchSource(notify chan string, source Source) {
 	for {
-		log.Info("running check")
+		time.Sleep(config.CheckTime * time.Second)
 
-		for idx, val := range sources {
-			hash := sha1.New()
+		hash := sha1.New()
 
-			rsp, err := http.Get(val.url.String())
-			if err != nil {
-				log.WithError(err).
-					WithField("id", val.id).
-					Warning("could not reach url")
-				continue
-			}
-
-			if rsp.StatusCode != http.StatusOK {
-				log.WithError(err).
-					WithField("id", val.id).
-					WithField("status_code", rsp.StatusCode).
-					Warning("could not reach url")
-				continue
-			}
-
-			body, err := ioutil.ReadAll(rsp.Body)
-			if err != nil {
-				log.WithError(err).WithField("id", val.id).Warning("could not parse body")
-				continue
-			}
-
-			hash.Write(body)
-			tmpHash := hex.EncodeToString(hash.Sum(nil))
-
-			if val.hash == "" {
-				log.WithField("id", val.id).Info("no hash found, setting to new value")
-				sources[idx].hash = tmpHash
-			} else {
-				if val.hash != tmpHash {
-					log.WithField("id", val.id).
-						WithField("check_count", val.changeCount).
-						WithField("old_hash", val.hash).
-						WithField("new_nash", tmpHash).
-						Debug("different hash found")
-
-					// confirm the change
-					if val.changeCount < config.CheckThreshold {
-						log.WithField("id", val.id).
-							Info("incrementing count due to different hash")
-						sources[idx].changeCount++
-					} else {
-						log.WithField("id", val.id).
-							Info("change found, commencing reload")
-						err := restartDeployment(val.id)
-						if err != nil {
-							log.WithField("id", val.id).WithError(err).Error("reload failed")
-						} else {
-							sources[idx].hash = tmpHash
-							sources[idx].changeCount = 0
-						}
-					}
-				} else {
-					log.WithField("id", val.id).Debug("matched hash, skipping")
-				}
-			}
+		rsp, err := http.Get(source.url.String())
+		if err != nil {
+			log.WithError(err).
+				WithField("id", source.id).
+				Warning("could not reach url")
+			continue
 		}
 
-		time.Sleep(config.CheckTime * time.Second)
+		if rsp.StatusCode != http.StatusOK {
+			log.WithError(err).
+				WithField("id", source.id).
+				WithField("status_code", rsp.StatusCode).
+				Warning("could not reach url")
+			continue
+		}
+
+		body, err := ioutil.ReadAll(rsp.Body)
+		if err != nil {
+			log.WithError(err).WithField("id", source.id).Warning("could not parse body")
+			continue
+		}
+
+		hash.Write(body)
+		tmpHash := hex.EncodeToString(hash.Sum(nil))
+
+		if source.hash == "" {
+			log.WithField("id", source.id).Info("no hash found, setting to new value")
+			source.hash = tmpHash
+		} else {
+			if source.hash != tmpHash {
+				log.WithField("id", source.id).
+					WithField("check_count", source.changeCount).
+					WithField("old_hash", source.hash).
+					WithField("new_nash", tmpHash).
+					Debug("different hash found")
+
+				// confirm the change
+				if source.changeCount < config.CheckThreshold {
+					log.WithField("id", source.id).Info("incrementing count due to different hash")
+					source.changeCount++
+				} else {
+					log.WithField("id", source.id).Info("change found, commencing reload")
+
+					notify <- source.id
+					source.hash = tmpHash
+					source.changeCount = 0
+				}
+			} else {
+				log.WithField("id", source.id).Debug("matched hash, skipping")
+			}
+		}
 	}
 }
 
@@ -194,6 +190,7 @@ func main() {
 		CheckThreshold:    3,
 		AnnotationKey:     "refresher.mrl/source",
 		ReloadKey:         "refresher.mrl/reloaded-at",
+		DryRun:            true,
 	}
 
 	opts.New(&config).UseEnv().Parse()
@@ -207,16 +204,40 @@ func main() {
 
 	log.Info("starting up")
 
-	kubernetesConfig, err := rest.InClusterConfig()
-	if err != nil {
-		log.WithError(err).Fatal("failed to create kubernetes config")
-	}
+	if !config.DryRun {
+		kubernetesConfig, err := rest.InClusterConfig()
+		if err != nil {
+			log.WithError(err).Fatal("failed to create kubernetes config")
+		}
 
-	kubernetesClient, err = kubernetes.NewForConfig(kubernetesConfig)
-	if err != nil {
-		log.WithError(err).Fatal("failed to create kubernetes client")
+		kubernetesClient, err = kubernetes.NewForConfig(kubernetesConfig)
+		if err != nil {
+			log.WithError(err).Fatal("failed to create kubernetes client")
+		}
 	}
 
 	parseSourcesFile(config.SourcesFile)
-	run()
+
+	notify := make(chan string)
+
+	for _, source := range sources {
+		go watchSource(notify, source)
+	}
+
+	for {
+		annotationID := <- notify
+
+		if annotationID == "" {
+			log.Warning("received empty data on notify channel")
+		}
+
+		if !config.DryRun {
+			err := restartDeployment(annotationID)
+			if err != nil {
+				log.WithField("id", annotationID).WithError(err).Error("reload failed")
+			}
+		} else {
+			log.WithField("id", annotationID).Info("reloading skipped as dry run flag is set")
+		}
+	}
 }
