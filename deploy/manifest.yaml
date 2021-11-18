@@ -65,7 +65,7 @@ spec:
     spec:
       serviceAccountName: refresher
       containers:
-      - image: ghcr.io/jakeloxton/refresher:main
+      - image: jakeloxton/refresher:latest
         name: refresher
         env:
           - name: PRODUCTION_LOGGING
