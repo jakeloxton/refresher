@@ -73,6 +73,7 @@ func restartDeployment(id string) error {
 	return nil
 }
 
+// TODO: Replace with a proper config parser
 func parseSourcesFile(configPath string) {
 	log.Info("parsing sources list")
 
@@ -125,7 +126,17 @@ func run() {
 
 			rsp, err := http.Get(val.url.String())
 			if err != nil {
-				log.WithError(err).WithField("id", val.id).Warning("could not reach url")
+				log.WithError(err).
+					WithField("id", val.id).
+					Warning("could not reach url")
+				continue
+			}
+
+			if rsp.StatusCode != http.StatusOK {
+				log.WithError(err).
+					WithField("id", val.id).
+					WithField("status_code", rsp.StatusCode).
+					Warning("could not reach url")
 				continue
 			}
 
