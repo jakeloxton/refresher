@@ -1,5 +1,7 @@
 # Refresher
 
+![Docker Build](https://github.com/jakeloxton/refresher/actions/workflows/docker-image.yml/badge.svg)
+
 Refresher is a simple tool to reload a Kubernetes deployment when the contents of a URL change. Configuration is provided by a key=value pairing, the key being the ID to annotate your deployments with, the value being the URL to watch. By default no reloads are triggered until the URL has been verified three times.
 
 Mainly useful for when applications retrieve their configuration from a URL on startup.
